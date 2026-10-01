@@ -2,9 +2,11 @@ import {
   loginIcon,
   ExcalLogo,
   eyeIcon,
+  presentationIcon,
+  ExportIcon,
 } from "@excalidraw/excalidraw/components/icons";
 import { useI18n } from "@excalidraw/excalidraw/i18n";
-import { MainMenu } from "@excalidraw/excalidraw/index";
+import { MainMenu, useExcalidrawAPI } from "@excalidraw/excalidraw/index";
 import React from "react";
 
 import { isDevEnv } from "@excalidraw/common";
@@ -13,6 +15,9 @@ import type { Theme } from "@excalidraw/element/types";
 
 import { LanguageList } from "../app-language/LanguageList";
 import { isExcalidrawPlusSignedUser } from "../app_constants";
+
+import { useStartPresentation } from "../presentation/PresentationMode";
+import { exportPresentationToPdf } from "../presentation/slides";
 
 import { saveDebugState } from "./DebugCanvas";
 
@@ -24,12 +29,26 @@ export const AppMainMenu: React.FC<{
   refresh: () => void;
 }> = React.memo((props) => {
   const { t } = useI18n();
+  const excalidrawAPI = useExcalidrawAPI();
+  const startPresentation = useStartPresentation();
   return (
     <MainMenu>
       <MainMenu.DefaultItems.LoadScene />
       <MainMenu.DefaultItems.SaveToActiveFile />
       <MainMenu.DefaultItems.Export />
       <MainMenu.DefaultItems.SaveAsImage />
+      <MainMenu.Item
+        icon={presentationIcon}
+        onSelect={() => startPresentation(0)}
+      >
+        Present slides
+      </MainMenu.Item>
+      <MainMenu.Item
+        icon={ExportIcon}
+        onSelect={() => excalidrawAPI && exportPresentationToPdf(excalidrawAPI)}
+      >
+        Export slides to PDF
+      </MainMenu.Item>
       {props.isCollabEnabled && (
         <MainMenu.DefaultItems.LiveCollaborationTrigger
           isCollaborating={props.isCollaborating}

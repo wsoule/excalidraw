@@ -148,6 +148,7 @@ import "./index.scss";
 
 import { ExcalidrawPlusPromoBanner } from "./components/ExcalidrawPlusPromoBanner";
 import { AppSidebar } from "./components/AppSidebar";
+import { PresentationMode } from "./presentation/PresentationMode";
 
 import type { CollabAPI } from "./collab/Collab";
 
@@ -1101,6 +1102,8 @@ const ExcalidrawWrapper = () => {
         />
 
         <AppSidebar />
+
+        <PresentationMode />
 
         {errorMessage && (
           <ErrorDialog onClose={() => setErrorMessage("")}>
