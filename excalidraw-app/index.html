@@ -129,7 +129,9 @@
 
     <% } else { %>
     <script>
-      window.EXCALIDRAW_ASSET_PATH = window.origin;
+      // resolve against the page so that deployments under a sub-path
+      // (e.g. GitHub Pages) load fonts from that sub-path
+      window.EXCALIDRAW_ASSET_PATH = new URL(".", window.location.href).href;
     </script>
     <% } %>
 
