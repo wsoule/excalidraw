@@ -38,7 +38,8 @@ jobs:
           CI: true
           VITE_APP_DISABLE_SENTRY: true
           VITE_APP_GIT_SHA: ${{ github.sha }}
-          COLLAB_SERVER_URL: ${{ vars.COLLAB_SERVER_URL }}
+          # self-hosted excalidraw-room on Railway (CORS_ORIGIN=https://wsoule.github.io)
+          COLLAB_SERVER_URL: ${{ vars.COLLAB_SERVER_URL || 'https://excalidraw-room-production-f4cb.up.railway.app' }}
           FIREBASE_CONFIG: ${{ vars.FIREBASE_CONFIG }}
       - name: Publish to gh-pages branch
         run: |
