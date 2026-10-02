@@ -126,7 +126,7 @@ export const getSlideRenderInput = (
   };
 };
 
-const getExportAppState = (input: SlideRenderInput) => ({
+export const getExportAppState = (input: SlideRenderInput) => ({
   exportBackground: true,
   viewBackgroundColor: input.appState.viewBackgroundColor,
   exportWithDarkMode: input.appState.theme === "dark",

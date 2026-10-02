@@ -61,6 +61,13 @@ export type SVGRenderConfig = {
    */
   reuseImages: boolean;
   theme: AppState["theme"];
+  /**
+   * whether to tag each element's root node with `data-id="<element id>"`
+   * (always done in tests), e.g. to animate individual elements
+   *
+   * @default false
+   */
+  markElementIds?: boolean;
 };
 
 export type InteractiveCanvasRenderConfig = {

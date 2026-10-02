@@ -20,6 +20,12 @@
     height: 100%;
     object-fit: contain;
     pointer-events: none;
+
+    &--replay svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
   }
 
   &__loading {
@@ -65,8 +71,13 @@
     }
   }
 
-  &__exit {
+  &__exit,
+  &__text-button {
     font-size: 1rem !important;
+  }
+
+  &__text-button[aria-pressed="false"] {
+    opacity: 0.5;
   }
 
   &__counter {

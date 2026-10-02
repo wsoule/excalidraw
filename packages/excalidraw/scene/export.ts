@@ -310,6 +310,8 @@ export const exportToSvg = async (
     exportingFrame?: NonDeleted<ExcalidrawFrameLikeElement> | null;
     skipInliningFonts?: true;
     reuseImages?: boolean;
+    /** tag each element's root node with `data-id` */
+    markElementIds?: boolean;
   },
 ): Promise<SVGSVGElement> => {
   const frameRendering = getFrameRenderingConfig(
@@ -499,6 +501,7 @@ export const exportToSvg = async (
         : new Map(),
       reuseImages: opts?.reuseImages ?? true,
       theme: exportWithDarkMode ? THEME.DARK : THEME.LIGHT,
+      markElementIds: opts?.markElementIds ?? false,
     },
   );
 

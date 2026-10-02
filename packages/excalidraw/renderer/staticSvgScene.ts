@@ -138,7 +138,7 @@ const renderElementToSvg = (
   }
 
   const addToRoot = (node: SVGElement, element: ExcalidrawElement) => {
-    if (isTestEnv()) {
+    if (isTestEnv() || renderConfig.markElementIds) {
       node.setAttribute("data-id", element.id);
     }
     root.appendChild(node);
