@@ -9,7 +9,12 @@ import {
   renderSlideForReplay,
   SlideReplay,
 } from "./slideReplay";
-import { getSlideRenderInput, getSlides, renderSlideToSvgUrl } from "./slides";
+import {
+  getSlideRenderInput,
+  getSlides,
+  isSlideReplayEnabled,
+  renderSlideToSvgUrl,
+} from "./slides";
 import { useDrawingRecorder } from "./useDrawingRecorder";
 
 import "./Presentation.scss";
@@ -293,7 +298,7 @@ const Presenter = ({
   );
   useEffect(() => {
     const nextSlide = slides[index + 1];
-    if (animate && nextSlide) {
+    if (animate && nextSlide && isSlideReplayEnabled(nextSlide)) {
       getReplaySvg(nextSlide).catch(() => {});
     }
   }, [animate, index, slides, getReplaySvg]);
@@ -444,6 +449,8 @@ const Presenter = ({
   };
 
   const url = urls[index];
+  // the A/✎ switch turns it off for all slides; the sidebar per slide
+  const canReplay = animate && isSlideReplayEnabled(slides[index]);
 
   return (
     <div
@@ -461,7 +468,7 @@ const Presenter = ({
       onPointerUp={onPointerUp}
       onContextMenu={(event) => event.preventDefault()}
     >
-      {animate && visit.play ? (
+      {canReplay && visit.play ? (
         <ReplaySlide
           key={`${index}:${visit.token}`}
           slide={slides[index]}
@@ -515,7 +522,7 @@ const Presenter = ({
           type="button"
           className="presentation-mode__text-button"
           onClick={replay}
-          disabled={!animate}
+          disabled={!canReplay}
           aria-label="Replay drawing"
           title="Replay drawing (R)"
         >

@@ -106,6 +106,38 @@ export const moveSlide = (
   });
 };
 
+const SLIDE_REPLAY_KEY = "replayDrawing";
+
+/** Whether presenting the slide replays how it was drawn (on by default). */
+export const isSlideReplayEnabled = (slide: ExcalidrawFrameLikeElement) =>
+  slide.customData?.[SLIDE_REPLAY_KEY] !== false;
+
+export const setSlideReplayEnabled = (
+  api: ExcalidrawImperativeAPI,
+  slideId: string,
+  enabled: boolean,
+) => {
+  api.updateScene({
+    elements: api.getSceneElementsIncludingDeleted().map((element) => {
+      if (
+        element.id !== slideId ||
+        !isFrameLikeElement(element) ||
+        isSlideReplayEnabled(element) === enabled
+      ) {
+        return element;
+      }
+      const { [SLIDE_REPLAY_KEY]: _, ...customData } = element.customData ?? {};
+      return newElementWith(element, {
+        // only store the non-default
+        customData: enabled
+          ? customData
+          : { ...customData, [SLIDE_REPLAY_KEY]: false },
+      });
+    }),
+    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+  });
+};
+
 export type SlideRenderInput = {
   elements: readonly NonDeletedExcalidrawElement[];
   files: BinaryFiles;

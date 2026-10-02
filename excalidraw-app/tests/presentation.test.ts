@@ -7,7 +7,12 @@ import type { ExcalidrawElement } from "@excalidraw/element/types";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { createImagePdf } from "../presentation/pdf";
-import { getSlides, moveSlide } from "../presentation/slides";
+import {
+  getSlides,
+  isSlideReplayEnabled,
+  moveSlide,
+  setSlideReplayEnabled,
+} from "../presentation/slides";
 
 // `API.createElement()` doesn't support `customData`
 const withCustomData = <T extends ExcalidrawElement>(
@@ -49,21 +54,21 @@ describe("getSlides", () => {
   });
 });
 
-describe("moveSlide", () => {
-  const createAPI = (initial: ExcalidrawElement[]) => {
-    let elements: readonly ExcalidrawElement[] = initial;
-    const updateScene = vi.fn(
-      ({ elements: next }: { elements: readonly ExcalidrawElement[] }) => {
-        elements = next;
-      },
-    );
-    const api = {
-      getSceneElementsIncludingDeleted: () => elements,
-      updateScene,
-    } as unknown as ExcalidrawImperativeAPI;
-    return { api, updateScene, getElements: () => elements };
-  };
+const createAPI = (initial: ExcalidrawElement[]) => {
+  let elements: readonly ExcalidrawElement[] = initial;
+  const updateScene = vi.fn(
+    ({ elements: next }: { elements: readonly ExcalidrawElement[] }) => {
+      elements = next;
+    },
+  );
+  const api = {
+    getSceneElementsIncludingDeleted: () => elements,
+    updateScene,
+  } as unknown as ExcalidrawImperativeAPI;
+  return { api, updateScene, getElements: () => elements };
+};
 
+describe("moveSlide", () => {
   it("reorders slides and persists the order on every frame", () => {
     const rect = API.createElement({ type: "rectangle", id: "rect" });
     const { api, getElements } = createAPI([
@@ -176,5 +181,46 @@ describe("createImagePdf", () => {
 
   it("throws without pages", () => {
     expect(() => createImagePdf([])).toThrow();
+  });
+});
+
+describe("per-slide drawing replay", () => {
+  it("is on by default and toggles undoably on the frame", () => {
+    const rect = API.createElement({ type: "rectangle", id: "rect" });
+    const a = withCustomData(API.createElement({ type: "frame", id: "a" }), {
+      presentationIndex: 0,
+    });
+    const { api, updateScene, getElements } = createAPI([a, rect, frame("b")]);
+    const slide = (id: string) =>
+      getSlides(getElements()).find((slide) => slide.id === id)!;
+
+    expect(isSlideReplayEnabled(slide("a"))).toBe(true);
+
+    setSlideReplayEnabled(api, "a", false);
+    expect(isSlideReplayEnabled(slide("a"))).toBe(false);
+    expect(isSlideReplayEnabled(slide("b"))).toBe(true);
+    expect(slide("a").customData).toEqual({
+      presentationIndex: 0,
+      replayDrawing: false,
+    });
+    expect(slide("a").version).toBeGreaterThan(a.version);
+    expect(getElements()[1]).toBe(rect);
+    expect(updateScene).toHaveBeenLastCalledWith(
+      expect.objectContaining({ captureUpdate: "IMMEDIATELY" }),
+    );
+
+    // turning it back on removes the key (the default isn't stored)
+    setSlideReplayEnabled(api, "a", true);
+    expect(slide("a").customData).toEqual({ presentationIndex: 0 });
+  });
+
+  it("survives saving to a .excalidraw file", () => {
+    const { api, getElements } = createAPI([frame("a")]);
+    setSlideReplayEnabled(api, "a", false);
+
+    const json = JSON.parse(serializeAsJSON(getElements(), {}, {}, "local"));
+    const [restored] = getSlides(restoreElements(json.elements, null));
+
+    expect(isSlideReplayEnabled(restored)).toBe(false);
   });
 });

@@ -194,6 +194,11 @@
     }
   }
 
+  &__replay-toggle[aria-pressed="false"] {
+    opacity: 0.35;
+    text-decoration: line-through;
+  }
+
   &__icon-button {
     width: 1.75rem;
     height: 1.75rem;

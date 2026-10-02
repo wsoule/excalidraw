@@ -5,19 +5,31 @@ import { useEffect, useState } from "react";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 
 import { useStartPresentation } from "./PresentationMode";
-import { exportPresentationToPdf, getSlides, moveSlide } from "./slides";
+import {
+  exportPresentationToPdf,
+  getSlides,
+  isSlideReplayEnabled,
+  moveSlide,
+  setSlideReplayEnabled,
+} from "./slides";
 
-type SlideListItem = { id: string; title: string };
+type SlideListItem = { id: string; title: string; replay: boolean };
 
 const toListItems = (elements: readonly ExcalidrawElement[]) =>
   getSlides(elements).map((slide) => ({
     id: slide.id,
     title: getFrameLikeTitle(slide),
+    replay: isSlideReplayEnabled(slide),
   }));
 
 const isSameList = (a: SlideListItem[], b: SlideListItem[]) =>
   a.length === b.length &&
-  a.every((item, i) => item.id === b[i].id && item.title === b[i].title);
+  a.every(
+    (item, i) =>
+      item.id === b[i].id &&
+      item.title === b[i].title &&
+      item.replay === b[i].replay,
+  );
 
 export const PresentationPanel = () => {
   const excalidrawAPI = useExcalidrawAPI();
@@ -94,6 +106,23 @@ export const PresentationPanel = () => {
               </button>
               <button
                 type="button"
+                className="presentation-panel__icon-button presentation-panel__replay-toggle"
+                aria-label="Replay drawing when presenting"
+                aria-pressed={slide.replay}
+                title={
+                  slide.replay
+                    ? "Replays how it was drawn (click to show it finished)"
+                    : "Shows it finished (click to replay how it was drawn)"
+                }
+                onClick={() =>
+                  excalidrawAPI &&
+                  setSlideReplayEnabled(excalidrawAPI, slide.id, !slide.replay)
+                }
+              >
+                ✎
+              </button>
+              <button
+                type="button"
                 className="presentation-panel__icon-button"
                 aria-label="Move slide up"
                 title="Move up"
@@ -138,8 +167,9 @@ export const PresentationPanel = () => {
       {!!slides.length && (
         <p className="presentation-panel__hint">
           While presenting: → / Space / tap right for next, ← / tap left for
-          previous, Esc to exit. Slide order is saved inside the drawing, so it
-          travels with the .excalidraw file.
+          previous, Esc to exit. ✎ slides replay how they were drawn (R to
+          replay, A to turn off for all). Slide order and ✎ are saved inside the
+          drawing, so they travel with the .excalidraw file.
         </p>
       )}
     </div>
