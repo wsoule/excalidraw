@@ -18,6 +18,7 @@ import type {
   ExcalidrawImperativeAPI,
 } from "@excalidraw/excalidraw/types";
 
+import { REPLAY_ENABLED_KEY, isReplayEnabled } from "./drawingTiming";
 import { createImagePdf } from "./pdf";
 
 import type { PdfImagePage } from "./pdf";
@@ -106,37 +107,49 @@ export const moveSlide = (
   });
 };
 
-const SLIDE_REPLAY_KEY = "replayDrawing";
-
 /** Whether presenting the slide replays how it was drawn (on by default). */
 export const isSlideReplayEnabled = (slide: ExcalidrawFrameLikeElement) =>
-  slide.customData?.[SLIDE_REPLAY_KEY] !== false;
+  isReplayEnabled(slide);
+
+/**
+ * Turns replay on/off for slides (frames) or elements (off: already there
+ * when the slide appears). Only the non-default is stored.
+ */
+export const setReplayEnabled = (
+  api: ExcalidrawImperativeAPI,
+  elementIds: ReadonlySet<string>,
+  enabled: boolean,
+) => {
+  let didChange = false;
+  const elements = api.getSceneElementsIncludingDeleted().map((element) => {
+    if (
+      !elementIds.has(element.id) ||
+      element.isDeleted ||
+      isReplayEnabled(element) === enabled
+    ) {
+      return element;
+    }
+    didChange = true;
+    const { [REPLAY_ENABLED_KEY]: _, ...customData } = element.customData ?? {};
+    return newElementWith(element, {
+      customData: enabled
+        ? customData
+        : { ...customData, [REPLAY_ENABLED_KEY]: false },
+    });
+  });
+  if (didChange) {
+    api.updateScene({
+      elements,
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+  }
+};
 
 export const setSlideReplayEnabled = (
   api: ExcalidrawImperativeAPI,
   slideId: string,
   enabled: boolean,
-) => {
-  api.updateScene({
-    elements: api.getSceneElementsIncludingDeleted().map((element) => {
-      if (
-        element.id !== slideId ||
-        !isFrameLikeElement(element) ||
-        isSlideReplayEnabled(element) === enabled
-      ) {
-        return element;
-      }
-      const { [SLIDE_REPLAY_KEY]: _, ...customData } = element.customData ?? {};
-      return newElementWith(element, {
-        // only store the non-default
-        customData: enabled
-          ? customData
-          : { ...customData, [SLIDE_REPLAY_KEY]: false },
-      });
-    }),
-    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-  });
-};
+) => setReplayEnabled(api, new Set([slideId]), enabled);
 
 export type SlideRenderInput = {
   elements: readonly NonDeletedExcalidrawElement[];

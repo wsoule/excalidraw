@@ -23,6 +23,16 @@ export type DrawingTiming = {
   p?: number[];
 };
 
+/**
+ * `customData` flag, stored only when `false`: on a frame, the slide shows
+ * finished instead of replaying; on an element, it's already there when the
+ * slide appears.
+ */
+export const REPLAY_ENABLED_KEY = "replayDrawing";
+
+export const isReplayEnabled = (element: ExcalidrawElement) =>
+  element.customData?.[REPLAY_ENABLED_KEY] !== false;
+
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
@@ -222,7 +232,8 @@ const clamp = (value: number, min: number, max: number) =>
  *
  * Elements drawn with recording on replay in the order (and at the speed) they
  * were drawn, with long pauses shortened. Older elements have no timing; they
- * replay first, in z-order, at an even pace.
+ * replay first, in z-order, at an even pace. Elements with replay turned off
+ * aren't in the timeline (they're there from the start).
  */
 export const buildReplayTimeline = (
   /** in z-order */
@@ -232,7 +243,12 @@ export const buildReplayTimeline = (
   const timed: { element: ExcalidrawElement; timing: DrawingTiming }[] = [];
 
   for (const element of elements) {
-    if (element.isDeleted || isFrameLikeElement(element)) {
+    if (
+      element.isDeleted ||
+      isFrameLikeElement(element) ||
+      // not in the timeline: never hidden
+      !isReplayEnabled(element)
+    ) {
       continue;
     }
     const timing = getDrawingTiming(element);

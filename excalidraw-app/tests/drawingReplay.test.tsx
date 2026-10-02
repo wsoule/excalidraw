@@ -187,6 +187,19 @@ describe("buildReplayTimeline", () => {
   });
 });
 
+describe("elements shown at start", () => {
+  it("are left out of the timeline", () => {
+    const animated = API.createElement({ type: "rectangle", id: "animated" });
+    const atStart = {
+      ...API.createElement({ type: "ellipse", id: "atStart" }),
+      customData: { replayDrawing: false },
+    };
+    expect(
+      buildReplayTimeline([atStart, animated]).map(({ element }) => element.id),
+    ).toEqual(["animated"]);
+  });
+});
+
 describe("partial strokes", () => {
   const stroke = freedraw([
     [0, 0],
@@ -321,7 +334,23 @@ describe("SlideReplay", () => {
       { t: 0, d: 600, p: [0, 200, 400, 600] },
     );
 
-    const elements = [frame, rect, stroke] as NonDeletedExcalidrawElement[];
+    const title = {
+      ...API.createElement({
+        type: "rectangle",
+        x: 100,
+        y: 10,
+        width: 50,
+        height: 20,
+        frameId: frame.id,
+      }),
+      customData: { replayDrawing: false },
+    };
+    const elements = [
+      frame,
+      rect,
+      stroke,
+      title,
+    ] as NonDeletedExcalidrawElement[];
     const input = {
       elements,
       files: {},
@@ -342,6 +371,8 @@ describe("SlideReplay", () => {
     expect(replay.duration).toBe(strokeStart + 600);
 
     replay.seek(0);
+    // shown at start
+    expect(node(title.id).style.visibility).toBe("");
     expect(node(rect.id).style.visibility).toBe("hidden");
     expect(node(stroke.id).style.visibility).toBe("hidden");
 

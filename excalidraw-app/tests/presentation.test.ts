@@ -11,6 +11,7 @@ import {
   getSlides,
   isSlideReplayEnabled,
   moveSlide,
+  setReplayEnabled,
   setSlideReplayEnabled,
 } from "../presentation/slides";
 
@@ -222,5 +223,33 @@ describe("per-slide drawing replay", () => {
     const [restored] = getSlides(restoreElements(json.elements, null));
 
     expect(isSlideReplayEnabled(restored)).toBe(false);
+  });
+});
+
+describe("per-element drawing replay", () => {
+  it("turns replay off/on for several elements in one undoable update", () => {
+    const a = API.createElement({ type: "rectangle", id: "a" });
+    const b = API.createElement({ type: "ellipse", id: "b" });
+    const c = API.createElement({ type: "arrow", id: "c" });
+    const { api, updateScene, getElements } = createAPI([a, b, c]);
+
+    setReplayEnabled(api, new Set(["a", "b"]), false);
+    expect(updateScene).toHaveBeenCalledTimes(1);
+    expect(updateScene).toHaveBeenLastCalledWith(
+      expect.objectContaining({ captureUpdate: "IMMEDIATELY" }),
+    );
+    expect(getElements().map((element) => element.customData)).toEqual([
+      { replayDrawing: false },
+      { replayDrawing: false },
+      undefined,
+    ]);
+    expect(getElements()[2]).toBe(c);
+
+    // no-op when nothing changes
+    setReplayEnabled(api, new Set(["a", "b"]), false);
+    expect(updateScene).toHaveBeenCalledTimes(1);
+
+    setReplayEnabled(api, new Set(["a"]), true);
+    expect(getElements()[0].customData).toEqual({});
   });
 });
