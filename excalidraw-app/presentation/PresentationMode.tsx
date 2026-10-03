@@ -23,6 +23,13 @@ import {
 import { InkLayer, LaserLayer } from "./InkLayers";
 import { keepInk } from "./inkStrokes";
 import {
+  PresentationRecorder,
+  formatDuration,
+  recordingsChangedAtom,
+  saveRecording,
+} from "./presentationRecording";
+import { SYNC_FLASH_DURATION, playSyncChirp } from "./syncChirp";
+import {
   PRESENTATION_HEARTBEAT,
   PRESENTATION_TIMEOUT,
   broadcastPresentation,
@@ -33,6 +40,7 @@ import { PresentationFollower, getPresenterName } from "./PresentationFollower";
 import "./Presentation.scss";
 
 import type { InkStroke } from "./inkStrokes";
+import type { PresentationRecording } from "./presentationRecording";
 import type { RemotePresentation } from "./PresentationFollower";
 import type { PresentationState, SlidePoint } from "./presentationSync";
 import type { ReplayController } from "./ReplaySlide";
@@ -47,6 +55,10 @@ const ANIMATE_STORAGE_KEY = "excalidraw-presentation-animate";
 
 const EMPTY_INK: readonly InkStroke[] = [];
 const DRAFT_BROADCAST_INTERVAL = 50;
+const CLEAN_HINT_DURATION = 2500;
+const CLEAN_EXIT_CORNER = 96;
+const DOUBLE_TAP_TIME = 500;
+
 const LASER_BROADCAST_INTERVAL = 25;
 
 const loadAnimatePreference = () => {
@@ -92,6 +104,7 @@ const Presenter = ({
   startIndex,
   onExit,
   onKeepInk,
+  onRecording,
 }: {
   slides: readonly Slide[];
   input: SlideRenderInput;
@@ -99,6 +112,8 @@ const Presenter = ({
   onExit: () => void;
   /** saves ink into the drawing */
   onKeepInk: (slide: Slide, strokes: readonly InkStroke[]) => void;
+  /** a finished recording */
+  onRecording: (recording: PresentationRecording) => void;
 }) => {
   const rootRef = useRef<HTMLDivElement>(null);
   const clampIndex = useCallback(
@@ -234,6 +249,108 @@ const Presenter = ({
       ),
     );
   }, [hasUnkeptInk, onKeepInk, slides, index, slideInk, updateSlideInk]);
+
+  // clean mode: nothing but the slide (for screen recordings)
+  const [clean, setClean] = useState(false);
+  const [cleanHint, setCleanHint] = useState(false);
+  const toggleClean = useCallback(
+    () => setClean((prevClean) => !prevClean),
+    [],
+  );
+  useEffect(() => {
+    setCleanHint(clean);
+    if (clean) {
+      const timer = window.setTimeout(
+        () => setCleanHint(false),
+        CLEAN_HINT_DURATION,
+      );
+      return () => window.clearTimeout(timer);
+    }
+  }, [clean]);
+  // double-tap the top-right corner to get the controls back (no Esc on iPad)
+  const cornerTapRef = useRef(0);
+  const onPointerDownCapture = (event: React.PointerEvent) => {
+    if (
+      !clean ||
+      event.clientX < window.innerWidth - CLEAN_EXIT_CORNER ||
+      event.clientY > CLEAN_EXIT_CORNER
+    ) {
+      return;
+    }
+    // neither drawing nor navigating
+    event.stopPropagation();
+    const now = performance.now();
+    if (now - cornerTapRef.current < DOUBLE_TAP_TIME) {
+      cornerTapRef.current = 0;
+      setClean(false);
+    } else {
+      cornerTapRef.current = now;
+    }
+  };
+
+  // sync chirp + flash, for lining up with the camera's recording
+  const [flash, setFlash] = useState(0);
+  useEffect(() => {
+    if (flash) {
+      const timer = window.setTimeout(() => setFlash(0), SYNC_FLASH_DURATION);
+      return () => window.clearTimeout(timer);
+    }
+  }, [flash]);
+  const sync = useCallback(() => {
+    const start = playSyncChirp();
+    setFlash(start);
+    return start;
+  }, []);
+
+  // recording what's shown, to export it as a video afterwards
+  const recorderRef = useRef<PresentationRecorder | null>(null);
+  const [recordingStart, setRecordingStart] = useState<number | null>(null);
+  const [, setRecordingTick] = useState(0);
+  useEffect(() => {
+    if (recordingStart === null) {
+      return;
+    }
+    const timer = window.setInterval(
+      () => setRecordingTick((tick) => tick + 1),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [recordingStart]);
+  const onRecordingRef = useRef(onRecording);
+  onRecordingRef.current = onRecording;
+  const stopRecording = useCallback(() => {
+    const recorder = recorderRef.current;
+    recorderRef.current = null;
+    setRecordingStart(null);
+    if (recorder) {
+      onRecordingRef.current(recorder.finish(randomId()));
+    }
+  }, []);
+  // exiting stops (and saves) the recording
+  useEffect(() => stopRecording, [stopRecording]);
+
+  const toggleRecording = useCallback(() => {
+    if (recorderRef.current) {
+      stopRecording();
+      return;
+    }
+    // time 0 is the chirp
+    const start = sync();
+    const recorder = new PresentationRecorder(
+      start,
+      Date.now() + (start - performance.now()),
+      {
+        elements: input.elements,
+        files: input.files,
+        viewBackgroundColor: input.appState.viewBackgroundColor,
+        theme: input.appState.theme,
+      },
+    );
+    recorder.state(presentationStateRef.current, start);
+    recorderRef.current = recorder;
+    setRecordingStart(start);
+    setClean(true);
+  }, [sync, stopRecording, input]);
 
   const toggleAnimate = useCallback(() => {
     setAnimate((prevAnimate) => {
@@ -390,6 +507,15 @@ const Presenter = ({
         case "k":
           keepSlideInk();
           break;
+        case "c":
+          toggleClean();
+          break;
+        case "s":
+          sync();
+          break;
+        case "R":
+          toggleRecording();
+          break;
         case "Escape":
           onExit();
           break;
@@ -413,6 +539,9 @@ const Presenter = ({
     clearInk,
     undoInk,
     keepSlideInk,
+    toggleClean,
+    sync,
+    toggleRecording,
     onExit,
     slides.length,
   ]);
@@ -466,6 +595,7 @@ const Presenter = ({
   presentationStateRef.current = presentationState;
   useEffect(() => {
     broadcastPresentation({ kind: "state", state: presentationState });
+    recorderRef.current?.state(presentationState);
   }, [presentationState]);
   useEffect(() => {
     // for people joining late, and messages that got dropped
@@ -510,6 +640,7 @@ const Presenter = ({
   const onLaserPoint = useCallback(
     (point: SlidePoint | null) => {
       const now = performance.now();
+      recorderRef.current?.laser(point, now);
       if (
         point &&
         now - lastLaserBroadcastRef.current < LASER_BROADCAST_INTERVAL
@@ -529,13 +660,14 @@ const Presenter = ({
       className={`presentation-mode${
         // keep the cursor while drawing/pointing
         controlsVisible || tool ? "" : " presentation-mode--idle"
-      }`}
+      }${clean ? " presentation-mode--clean" : ""}`}
       tabIndex={-1}
       role="dialog"
       // taps on slides shouldn't close an undocked sidebar underneath
       data-prevent-outside-click
       aria-label="Presentation"
       onPointerMove={showControls}
+      onPointerDownCapture={onPointerDownCapture}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
       onContextMenu={(event) => event.preventDefault()}
@@ -575,6 +707,19 @@ const Presenter = ({
         active={tool === "laser"}
         onPoint={onLaserPoint}
       />
+
+      {!!flash && <div className="presentation-mode__flash" />}
+      {cleanHint && (
+        <div className="presentation-mode__hint">
+          Double-tap the top-right corner to show the controls
+        </div>
+      )}
+      {clean && recordingStart !== null && (
+        <div
+          className="presentation-mode__recording-dot"
+          aria-label="Recording"
+        />
+      )}
 
       <div
         className="presentation-mode__controls"
@@ -664,6 +809,38 @@ const Presenter = ({
             </button>
           </>
         )}
+        <span className="presentation-mode__divider" />
+        <button
+          type="button"
+          className="presentation-mode__pill"
+          onClick={toggleClean}
+          title="Clean mode: hide the controls, for screen recording (C). Double-tap the top-right corner to bring them back."
+        >
+          Clean
+        </button>
+        <button
+          type="button"
+          className="presentation-mode__pill"
+          onClick={sync}
+          title="Sync: flash and chirp, to line up with your camera recording (S)"
+        >
+          Sync
+        </button>
+        <button
+          type="button"
+          className="presentation-mode__pill presentation-mode__record"
+          onClick={toggleRecording}
+          aria-pressed={recordingStart !== null}
+          title={
+            recordingStart === null
+              ? "Record the presentation, to export it as a video later (Shift+R). Starts with a sync chirp."
+              : "Stop recording (Shift+R)"
+          }
+        >
+          {recordingStart === null
+            ? "● Rec"
+            : `■ ${formatDuration(performance.now() - recordingStart)}`}
+        </button>
         <button
           type="button"
           className="presentation-mode__exit"
@@ -707,6 +884,29 @@ export const PresentationMode = () => {
     exitFullscreen();
     setPresentation(null);
   }, [setPresentation]);
+
+  const setRecordingsChanged = useSetAtom(recordingsChangedAtom);
+  const onRecording = useCallback(
+    async (recording: PresentationRecording) => {
+      try {
+        await saveRecording(recording);
+        setRecordingsChanged((count) => count + 1);
+        excalidrawAPI?.setToast({
+          message: `Recording saved (${formatDuration(
+            recording.duration,
+          )}). Export it as a video from the Presentation sidebar.`,
+          closable: true,
+        });
+      } catch (error: any) {
+        console.error(error);
+        excalidrawAPI?.setToast({
+          message: `Couldn't save the recording: ${error?.message || error}`,
+          closable: true,
+        });
+      }
+    },
+    [excalidrawAPI, setRecordingsChanged],
+  );
 
   const onKeepInk = useCallback(
     (slide: Slide, strokes: readonly InkStroke[]) => {
@@ -759,6 +959,7 @@ export const PresentationMode = () => {
         startIndex={presentation.startIndex}
         onExit={onExit}
         onKeepInk={onKeepInk}
+        onRecording={onRecording}
       />,
       document.body,
     );

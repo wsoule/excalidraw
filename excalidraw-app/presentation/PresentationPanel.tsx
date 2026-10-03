@@ -8,6 +8,7 @@ import type { AppState } from "@excalidraw/excalidraw/types";
 import { isReplayEnabled } from "./drawingTiming";
 
 import { useStartPresentation } from "./PresentationMode";
+import { RecordingsPanel } from "./RecordingsPanel";
 import {
   exportPresentationToPdf,
   getSlides,
@@ -254,10 +255,13 @@ export const PresentationPanel = () => {
           While presenting: → / Space / tap right for next, ← / tap left for
           previous, Esc to exit. ✎ slides replay how they were drawn (R to
           replay, A to turn off for all); select elements to choose which ones
-          animate. Slide order and these settings are saved inside the drawing,
-          so they travel with the .excalidraw file.
+          animate. D pen, L laser, C clean mode (for screen recording), S sync
+          chirp, Shift+R record. Slide order and these settings are saved inside
+          the drawing, so they travel with the .excalidraw file.
         </p>
       )}
+
+      <RecordingsPanel />
     </div>
   );
 };
