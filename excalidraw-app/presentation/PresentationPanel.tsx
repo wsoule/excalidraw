@@ -255,9 +255,11 @@ export const PresentationPanel = () => {
           While presenting: → / Space / tap right for next, ← / tap left for
           previous, Esc to exit. ✎ slides replay how they were drawn (R to
           replay, A to turn off for all); select elements to choose which ones
-          animate. D pen, L laser, C clean mode (for screen recording), S sync
-          chirp, Shift+R record. Slide order and these settings are saved inside
-          the drawing, so they travel with the .excalidraw file.
+          animate. The Apple Pencil always draws (double-tap the screen with it
+          to switch pen ↔ laser); D / L turn on the pen / laser for a finger or
+          mouse. C clean mode (for screen recording), S sync chirp, Shift+R
+          record. Slide order and these settings are saved inside the drawing,
+          so they travel with the .excalidraw file.
         </p>
       )}
 

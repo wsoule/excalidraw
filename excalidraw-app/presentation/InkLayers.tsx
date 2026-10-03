@@ -68,19 +68,30 @@ const InkPath = ({ stroke, slide }: { stroke: InkStroke; slide: Slide }) => (
   />
 );
 
+/**
+ * Pointer input for a layer: the presenter decides which pointer goes where
+ * (the Pencil draws, fingers navigate, ...), the layer draws.
+ */
+export type LayerInput = {
+  down: (event: React.PointerEvent) => void;
+  move: (event: React.PointerEvent) => void;
+  /** @returns the finished stroke, if any */
+  up: () => InkStroke | null;
+};
+
 /** Pen ink over the slide. */
 export const InkLayer = ({
   slide,
   strokes,
-  active,
+  inputRef,
   onStroke,
   onDraft,
   remoteDraft,
 }: {
   slide: Slide;
   strokes: readonly InkStroke[];
-  /** pen on: pointer input draws instead of navigating */
-  active: boolean;
+  /** set to this layer's input handlers (presenter only) */
+  inputRef?: React.MutableRefObject<LayerInput | null>;
   onStroke?: (stroke: InkStroke) => void;
   /** the stroke being drawn (`null` when done) */
   onDraft?: (stroke: InkStroke | null) => void;
@@ -90,7 +101,6 @@ export const InkLayer = ({
   const svgRef = useRef<SVGSVGElement>(null);
   const [draft, setDraft] = useState<InkStroke | null>(null);
   const draftRef = useRef<InkStroke | null>(null);
-  const pointerIdRef = useRef<number | null>(null);
 
   const setDraftStroke = (stroke: InkStroke | null) => {
     draftRef.current = stroke;
@@ -98,42 +108,14 @@ export const InkLayer = ({
     onDraft?.(stroke);
   };
 
-  const finish = () => {
-    const stroke = draftRef.current;
-    pointerIdRef.current = null;
-    setDraftStroke(null);
-    if (stroke) {
-      onStroke?.(stroke);
-    }
-  };
-
-  // pen turned off mid-stroke
-  useEffect(() => {
-    if (!active && draftRef.current) {
-      finish();
-    }
-  });
-
   const toScene = (event: { clientX: number; clientY: number }) => {
     const { x, y, scale } = toSlidePoint(svgRef.current, event);
     return { x: slide.x + x, y: slide.y + y, scale };
   };
 
-  return (
-    <SlideSvg
-      slide={slide}
-      svgRef={svgRef}
-      className={`presentation-mode__ink${
-        active ? " presentation-mode__ink--active" : ""
-      }`}
-      onPointerDown={(event) => {
-        if (!active || event.button > 0 || pointerIdRef.current !== null) {
-          return;
-        }
-        // drawing, not navigating
-        event.stopPropagation();
-        event.currentTarget.setPointerCapture?.(event.pointerId);
-        pointerIdRef.current = event.pointerId;
+  if (inputRef) {
+    inputRef.current = {
+      down: (event) => {
         const { x, y, scale } = toScene(event);
         setDraftStroke(
           startInkStroke({
@@ -144,13 +126,12 @@ export const InkLayer = ({
             now: Date.now(),
           }),
         );
-      }}
-      onPointerMove={(event) => {
-        if (event.pointerId !== pointerIdRef.current || !draftRef.current) {
+      },
+      move: (event) => {
+        if (!draftRef.current) {
           return;
         }
-        event.stopPropagation();
-        // coalesced events: smoother strokes with a pen
+        // coalesced events: smoother strokes with a pen (where supported)
         const events = event.nativeEvent.getCoalescedEvents?.() ?? [];
         let stroke = draftRef.current;
         for (const pointerEvent of events.length
@@ -164,20 +145,32 @@ export const InkLayer = ({
           );
         }
         setDraftStroke(stroke);
-      }}
-      onPointerUp={(event) => {
-        if (event.pointerId !== pointerIdRef.current) {
-          return;
+      },
+      up: () => {
+        const stroke = draftRef.current;
+        setDraftStroke(null);
+        if (stroke) {
+          onStroke?.(stroke);
         }
-        event.stopPropagation();
-        finish();
-      }}
-      onPointerCancel={(event) => {
-        if (event.pointerId === pointerIdRef.current) {
-          finish();
-        }
-      }}
-    >
+        return stroke;
+      },
+    };
+  }
+
+  // unmounted mid-stroke (e.g. slide changed): keep what was drawn
+  const inputRefRef = useRef(inputRef);
+  inputRefRef.current = inputRef;
+  useEffect(
+    () => () => {
+      if (draftRef.current) {
+        inputRefRef.current?.current?.up();
+      }
+    },
+    [],
+  );
+
+  return (
+    <SlideSvg slide={slide} svgRef={svgRef} className="presentation-mode__ink">
       {strokes.map((stroke) => (
         <InkPath key={stroke.element.id} stroke={stroke} slide={slide} />
       ))}
@@ -287,61 +280,37 @@ const useLaserTrails = () => {
 /** The presenter's laser pointer. */
 export const LaserLayer = ({
   slide,
-  active,
+  inputRef,
   onPoint,
 }: {
   slide: Slide;
-  active: boolean;
+  inputRef: React.MutableRefObject<LayerInput | null>;
   /** each trail point (slide coordinates), `null` when lifted */
   onPoint?: (point: SlidePoint | null) => void;
 }) => {
   const { svgRef, pathRef, trails } = useLaserTrails();
-  const pointerIdRef = useRef<number | null>(null);
 
-  const end = () => {
-    pointerIdRef.current = null;
-    trails.end();
-    onPoint?.(null);
+  const add = (event: React.PointerEvent) => {
+    const { x, y } = toSlidePoint(svgRef.current, event);
+    trails.add([x, y]);
+    onPoint?.([x, y]);
+  };
+
+  inputRef.current = {
+    down: add,
+    move: add,
+    up: () => {
+      trails.end();
+      onPoint?.(null);
+      return null;
+    },
   };
 
   return (
     <SlideSvg
       slide={slide}
       svgRef={svgRef}
-      className={`presentation-mode__laser${
-        active ? " presentation-mode__laser--active" : ""
-      }`}
-      onPointerDown={(event) => {
-        if (!active || event.button > 0 || pointerIdRef.current !== null) {
-          return;
-        }
-        event.stopPropagation();
-        event.currentTarget.setPointerCapture?.(event.pointerId);
-        pointerIdRef.current = event.pointerId;
-        const { x, y } = toSlidePoint(svgRef.current, event);
-        trails.add([x, y]);
-        onPoint?.([x, y]);
-      }}
-      onPointerMove={(event) => {
-        if (event.pointerId !== pointerIdRef.current) {
-          return;
-        }
-        event.stopPropagation();
-        const { x, y } = toSlidePoint(svgRef.current, event);
-        trails.add([x, y]);
-        onPoint?.([x, y]);
-      }}
-      onPointerUp={(event) => {
-        if (event.pointerId === pointerIdRef.current) {
-          event.stopPropagation();
-          end();
-        }
-      }}
-      onPointerCancel={(event) => {
-        if (event.pointerId === pointerIdRef.current) {
-          end();
-        }
-      }}
+      className="presentation-mode__laser"
     >
       <path ref={pathRef} fill={INK_COLOR} />
     </SlideSvg>

@@ -33,7 +33,7 @@
   }
 
   // (the pen/laser keep their cursor)
-  &--clean:not(:has(.presentation-mode__ink--active, .presentation-mode__laser--active)) {
+  &--clean:not(&--drawing) {
     cursor: none;
   }
 
@@ -84,12 +84,12 @@
     width: 100%;
     height: 100%;
     overflow: visible;
+    // display only: the presenter routes pointer input
     pointer-events: none;
+  }
 
-    &--active {
-      pointer-events: auto;
-      cursor: crosshair;
-    }
+  &--drawing {
+    cursor: crosshair;
   }
 
   &__loading {

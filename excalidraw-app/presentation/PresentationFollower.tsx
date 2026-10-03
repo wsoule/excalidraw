@@ -148,7 +148,6 @@ export const PresentationFollower = ({
             key={slide.id}
             slide={slide}
             strokes={state.strokes}
-            active={false}
             remoteDraft={visibleDraft}
           />
           <RemoteLaserLayer

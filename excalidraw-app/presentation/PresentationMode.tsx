@@ -21,6 +21,7 @@ import {
 } from "./fullscreen";
 
 import { InkLayer, LaserLayer } from "./InkLayers";
+
 import { keepInk } from "./inkStrokes";
 import {
   PresentationRecorder,
@@ -39,6 +40,7 @@ import { PresentationFollower, getPresenterName } from "./PresentationFollower";
 
 import "./Presentation.scss";
 
+import type { LayerInput } from "./InkLayers";
 import type { InkStroke } from "./inkStrokes";
 import type { PresentationRecording } from "./presentationRecording";
 import type { RemotePresentation } from "./PresentationFollower";
@@ -57,7 +59,15 @@ const EMPTY_INK: readonly InkStroke[] = [];
 const DRAFT_BROADCAST_INTERVAL = 50;
 const CLEAN_HINT_DURATION = 2500;
 const CLEAN_EXIT_CORNER = 96;
-const DOUBLE_TAP_TIME = 500;
+const DOUBLE_TAP_TIME = 400;
+const PENCIL_HINT_DURATION = 1200;
+/** a Pencil touch this short and still is a tap */
+const PENCIL_TAP_TIME = 250;
+const PENCIL_TAP_DISTANCE = 10;
+/** how close the second tap of a double-tap must be (px) */
+const PENCIL_DOUBLE_TAP_DISTANCE = 40;
+/** ignore finger taps this soon after using the Pencil (resting palm) */
+const PALM_GUARD_TIME = 1000;
 
 const LASER_BROADCAST_INTERVAL = 25;
 
@@ -214,11 +224,27 @@ const Presenter = ({
       }),
     [slideId],
   );
-  const toggleTool = useCallback(
-    (nextTool: "pen" | "laser") =>
-      setTool((prevTool) => (prevTool === nextTool ? null : nextTool)),
-    [],
-  );
+  // what the Apple Pencil (or another stylus) does, whatever `tool` is
+  const [pencilTool, setPencilTool] = useState<"pen" | "laser">("pen");
+  const [pencilHint, setPencilHint] = useState<"pen" | "laser" | null>(null);
+  useEffect(() => {
+    if (pencilHint) {
+      const timer = window.setTimeout(
+        () => setPencilHint(null),
+        PENCIL_HINT_DURATION,
+      );
+      return () => window.clearTimeout(timer);
+    }
+  }, [pencilHint]);
+  const toggleTool = useCallback((nextTool: "pen" | "laser") => {
+    setTool((prevTool) => {
+      if (prevTool === nextTool) {
+        return null;
+      }
+      setPencilTool(nextTool);
+      return nextTool;
+    });
+  }, []);
   const addStroke = useCallback(
     (stroke: InkStroke) => updateSlideInk((strokes) => [...strokes, stroke]),
     [updateSlideInk],
@@ -349,7 +375,6 @@ const Presenter = ({
     recorder.state(presentationStateRef.current, start);
     recorderRef.current = recorder;
     setRecordingStart(start);
-    setClean(true);
   }, [sync, stopRecording, input]);
 
   const toggleAnimate = useCallback(() => {
@@ -546,14 +571,137 @@ const Presenter = ({
     slides.length,
   ]);
 
-  // tap/click right side → next, left side → previous; swipe on touch
+  // pointers: the Pencil uses `pencilTool`, fingers/mouse the selected tool,
+  // and without one, tap/click right side → next, left side → previous,
+  // swipe on touch
+  const inkInputRef = useRef<LayerInput | null>(null);
+  const laserInputRef = useRef<LayerInput | null>(null);
+  const drawingRef = useRef<{
+    pointerId: number;
+    tool: "pen" | "laser";
+    pencil: boolean;
+    x: number;
+    y: number;
+    time: number;
+  } | null>(null);
+  const lastPencilTapRef = useRef<{
+    x: number;
+    y: number;
+    time: number;
+    strokeId: string | null;
+  } | null>(null);
+  const lastPencilUseRef = useRef(-Infinity);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
 
+  const getInput = (drawingTool: "pen" | "laser") =>
+    drawingTool === "pen" ? inkInputRef.current : laserInputRef.current;
+
+  /** double-tapping the screen with the Pencil switches pen ↔ laser */
+  const onPencilUp = (
+    event: React.PointerEvent,
+    drawing: NonNullable<typeof drawingRef.current>,
+    stroke: InkStroke | null,
+  ) => {
+    const now = performance.now();
+    const isTap =
+      now - drawing.time < PENCIL_TAP_TIME &&
+      Math.hypot(event.clientX - drawing.x, event.clientY - drawing.y) <
+        PENCIL_TAP_DISTANCE;
+    if (!isTap) {
+      lastPencilTapRef.current = null;
+      return;
+    }
+    const prevTap = lastPencilTapRef.current;
+    if (
+      prevTap &&
+      now - prevTap.time < DOUBLE_TAP_TIME &&
+      Math.hypot(event.clientX - prevTap.x, event.clientY - prevTap.y) <
+        PENCIL_DOUBLE_TAP_DISTANCE
+    ) {
+      lastPencilTapRef.current = null;
+      // the taps' dots aren't ink
+      const tapStrokeIds = [prevTap.strokeId, stroke?.element.id];
+      updateSlideInk((strokes) =>
+        strokes.filter(
+          (ink) => ink.kept || !tapStrokeIds.includes(ink.element.id),
+        ),
+      );
+      const nextTool = drawing.tool === "pen" ? "laser" : "pen";
+      setPencilTool(nextTool);
+      setTool((prevTool) => (prevTool ? nextTool : prevTool));
+      setPencilHint(nextTool);
+    } else {
+      lastPencilTapRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        time: now,
+        strokeId: stroke?.element.id ?? null,
+      };
+    }
+  };
+
   const onPointerDown = (event: React.PointerEvent) => {
+    if (event.button > 0 || drawingRef.current) {
+      return;
+    }
+    const pencil = event.pointerType === "pen";
+    if (pencil) {
+      lastPencilUseRef.current = performance.now();
+    }
+    const drawingTool = pencil ? tool ?? pencilTool : tool;
+    if (drawingTool) {
+      // drawing, not navigating
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      drawingRef.current = {
+        pointerId: event.pointerId,
+        tool: drawingTool,
+        pencil,
+        x: event.clientX,
+        y: event.clientY,
+        time: performance.now(),
+      };
+      getInput(drawingTool)?.down(event);
+      return;
+    }
+    // a palm resting on the screen while using the Pencil
+    if (
+      event.pointerType === "touch" &&
+      performance.now() - lastPencilUseRef.current < PALM_GUARD_TIME
+    ) {
+      return;
+    }
     pointerStartRef.current = { x: event.clientX, y: event.clientY };
   };
 
+  const onPointerMove = (event: React.PointerEvent) => {
+    const drawing = drawingRef.current;
+    if (drawing?.pointerId === event.pointerId) {
+      getInput(drawing.tool)?.move(event);
+      return;
+    }
+    showControls();
+  };
+
+  const endDrawing = (event: React.PointerEvent) => {
+    const drawing = drawingRef.current;
+    if (drawing?.pointerId !== event.pointerId) {
+      return false;
+    }
+    drawingRef.current = null;
+    const stroke = getInput(drawing.tool)?.up() ?? null;
+    if (drawing.pencil) {
+      lastPencilUseRef.current = performance.now();
+      if (event.type === "pointerup") {
+        onPencilUp(event, drawing, stroke);
+      }
+    }
+    return true;
+  };
+
   const onPointerUp = (event: React.PointerEvent) => {
+    if (endDrawing(event)) {
+      return;
+    }
     const start = pointerStartRef.current;
     pointerStartRef.current = null;
     showControls();
@@ -658,18 +806,24 @@ const Presenter = ({
     <div
       ref={rootRef}
       className={`presentation-mode${
-        // keep the cursor while drawing/pointing
-        controlsVisible || tool ? "" : " presentation-mode--idle"
-      }${clean ? " presentation-mode--clean" : ""}`}
+        // keep the cursor while drawing/pointing, and the controls while
+        // recording
+        controlsVisible || tool || recordingStart !== null
+          ? ""
+          : " presentation-mode--idle"
+      }${clean ? " presentation-mode--clean" : ""}${
+        tool ? " presentation-mode--drawing" : ""
+      }`}
       tabIndex={-1}
       role="dialog"
       // taps on slides shouldn't close an undocked sidebar underneath
       data-prevent-outside-click
       aria-label="Presentation"
-      onPointerMove={showControls}
+      onPointerMove={onPointerMove}
       onPointerDownCapture={onPointerDownCapture}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
+      onPointerCancel={endDrawing}
       onContextMenu={(event) => event.preventDefault()}
     >
       {canReplay && visit.play ? (
@@ -697,18 +851,23 @@ const Presenter = ({
         key={slideId}
         slide={slides[index]}
         strokes={slideInk}
-        active={tool === "pen"}
+        inputRef={inkInputRef}
         onStroke={addStroke}
         onDraft={onDraft}
       />
       <LaserLayer
         key={`laser:${slideId}`}
         slide={slides[index]}
-        active={tool === "laser"}
+        inputRef={laserInputRef}
         onPoint={onLaserPoint}
       />
 
       {!!flash && <div className="presentation-mode__flash" />}
+      {pencilHint && (
+        <div className="presentation-mode__hint">
+          Pencil: {pencilHint === "pen" ? "Pen" : "Laser"}
+        </div>
+      )}
       {cleanHint && (
         <div className="presentation-mode__hint">
           Double-tap the top-right corner to show the controls
@@ -776,7 +935,7 @@ const Presenter = ({
           className="presentation-mode__pill"
           onClick={() => toggleTool("pen")}
           aria-pressed={tool === "pen"}
-          title="Pen: draw on the slide (D)"
+          title="Pen: draw on the slide with a finger or mouse (D). The Apple Pencil always draws; double-tap the screen with it to switch pen ↔ laser."
         >
           Pen
         </button>
@@ -785,7 +944,7 @@ const Presenter = ({
           className="presentation-mode__pill"
           onClick={() => toggleTool("laser")}
           aria-pressed={tool === "laser"}
-          title="Laser pointer (L)"
+          title="Laser pointer (L). Double-tap the screen with the Apple Pencil to switch pen ↔ laser."
         >
           Laser
         </button>
