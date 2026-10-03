@@ -13,12 +13,14 @@ import type {
 
 import { WS_EVENTS, FILE_UPLOAD_TIMEOUT, WS_SUBTYPES } from "../app_constants";
 import { isSyncableElement } from "../data";
+import { setPresentationSender } from "../presentation/presentationSync";
 
 import type {
   SocketUpdateData,
   SocketUpdateDataSource,
   SyncableExcalidrawElement,
 } from "../data";
+import type { PresentationMessage } from "../presentation/presentationSync";
 import type { TCollabClass } from "./Collab";
 import type { Socket } from "socket.io-client";
 
@@ -57,6 +59,8 @@ class Portal {
       this.collab.setCollaborators(clients);
     });
 
+    setPresentationSender(this.broadcastPresentation);
+
     return socket;
   }
 
@@ -65,6 +69,7 @@ class Portal {
       return;
     }
     this.queueFileUpload.flush();
+    setPresentationSender(null);
     this.socket.close();
     this.socket = null;
     this.roomId = null;
@@ -196,6 +201,20 @@ class Portal {
         data as SocketUpdateData,
         true, // volatile
       );
+    }
+  };
+
+  broadcastPresentation = (message: PresentationMessage, volatile: boolean) => {
+    if (this.socket?.id) {
+      const data: SocketUpdateDataSource["PRESENTATION"] = {
+        type: WS_SUBTYPES.PRESENTATION,
+        payload: {
+          socketId: this.socket.id as SocketId,
+          username: this.collab.state.username,
+          message,
+        },
+      };
+      return this._broadcastSocketData(data as SocketUpdateData, volatile);
     }
   };
 

@@ -87,6 +87,7 @@ import {
   saveUsernameToLocalStorage,
 } from "../data/localStorage";
 import { resetBrowserStateVersions } from "../data/tabSync";
+import { receivePresentationMessage } from "../presentation/presentationSync";
 
 import { collabErrorIndicatorAtom } from "./CollabError";
 import Portal from "./Portal";
@@ -674,6 +675,12 @@ class Collab extends PureComponent<CollabProps, CollabState> {
               userState,
               username,
             });
+            break;
+          }
+
+          case WS_SUBTYPES.PRESENTATION: {
+            const { message, socketId, username } = decryptedData.payload;
+            receivePresentationMessage({ ...message, socketId, username });
             break;
           }
 

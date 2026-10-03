@@ -124,6 +124,29 @@
   }
 }
 
+.presentation-mode__following {
+  padding: 0 0.5rem 0 0.75rem;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.presentation-rejoin {
+  position: fixed;
+  top: max(4.5rem, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 999px;
+  background: #e03131;
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  font-size: 0.875rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
 .excalidraw .presentation-panel {
   display: flex;
   flex-direction: column;

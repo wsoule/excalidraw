@@ -1,14 +1,11 @@
+import { randomId } from "@excalidraw/common";
 import { useExcalidrawAPI } from "@excalidraw/excalidraw";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { atom, useAtom, useSetAtom } from "../app-jotai";
 
-import {
-  getSlideReplayTimeline,
-  renderSlideForReplay,
-  SlideReplay,
-} from "./slideReplay";
+import { renderSlideForReplay } from "./slideReplay";
 import {
   getSlideRenderInput,
   getSlides,
@@ -16,13 +13,29 @@ import {
   renderSlideToSvgUrl,
 } from "./slides";
 import { useDrawingRecorder } from "./useDrawingRecorder";
+import { ReplaySlide } from "./ReplaySlide";
+import {
+  enterFullscreen,
+  exitFullscreen,
+  getFullscreenElement,
+} from "./fullscreen";
+
 import { InkLayer, LaserLayer } from "./InkLayers";
 import { keepInk } from "./inkStrokes";
+import {
+  PRESENTATION_HEARTBEAT,
+  PRESENTATION_TIMEOUT,
+  broadcastPresentation,
+  onPresentationMessage,
+} from "./presentationSync";
+import { PresentationFollower, getPresenterName } from "./PresentationFollower";
 
 import "./Presentation.scss";
 
 import type { InkStroke } from "./inkStrokes";
-
+import type { RemotePresentation } from "./PresentationFollower";
+import type { PresentationState, SlidePoint } from "./presentationSync";
+import type { ReplayController } from "./ReplaySlide";
 import type { Slide, SlideRenderInput } from "./slides";
 
 /** non-null while presenting */
@@ -33,6 +46,8 @@ const SWIPE_THRESHOLD = 50;
 const ANIMATE_STORAGE_KEY = "excalidraw-presentation-animate";
 
 const EMPTY_INK: readonly InkStroke[] = [];
+const DRAFT_BROADCAST_INTERVAL = 50;
+const LASER_BROADCAST_INTERVAL = 25;
 
 const loadAnimatePreference = () => {
   try {
@@ -45,128 +60,6 @@ const loadAnimatePreference = () => {
 const saveAnimatePreference = (animate: boolean) => {
   try {
     localStorage.setItem(ANIMATE_STORAGE_KEY, String(animate));
-  } catch {}
-};
-
-type ReplayController = {
-  isPlaying: () => boolean;
-  finish: () => void;
-};
-
-/** A slide that replays how it was drawn. */
-const ReplaySlide = ({
-  slide,
-  input,
-  getSvg,
-  controllerRef,
-  label,
-  onError,
-}: {
-  slide: Slide;
-  input: SlideRenderInput;
-  getSvg: (slide: Slide) => Promise<SVGSVGElement>;
-  controllerRef: React.MutableRefObject<ReplayController | null>;
-  label: string;
-  onError: () => void;
-}) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let frame = 0;
-    let svg: SVGSVGElement | null = null;
-    let controller: ReplayController | null = null;
-
-    (async () => {
-      try {
-        const template = await getSvg(slide);
-        const container = containerRef.current;
-        if (cancelled || !container) {
-          return;
-        }
-        // the replay mutates the nodes; keep the cached render pristine
-        svg = template.cloneNode(true) as SVGSVGElement;
-        container.appendChild(svg);
-
-        const replay = new SlideReplay(
-          svg,
-          getSlideReplayTimeline(slide, input),
-        );
-        replay.seek(0);
-
-        let playing = true;
-        const startTime = performance.now();
-        const tick = (now: number) => {
-          const time = now - startTime;
-          replay.seek(time);
-          if (time >= replay.duration) {
-            playing = false;
-            return;
-          }
-          frame = requestAnimationFrame(tick);
-        };
-        frame = requestAnimationFrame(tick);
-
-        controller = {
-          isPlaying: () => playing,
-          finish: () => {
-            cancelAnimationFrame(frame);
-            replay.seek(Infinity);
-            playing = false;
-          },
-        };
-        controllerRef.current = controller;
-      } catch (error) {
-        console.error(error);
-        if (!cancelled) {
-          onError();
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(frame);
-      svg?.remove();
-      if (controller && controllerRef.current === controller) {
-        controllerRef.current = null;
-      }
-    };
-  }, [slide, input, getSvg, controllerRef, onError]);
-
-  return (
-    <div
-      ref={containerRef}
-      className="presentation-mode__slide presentation-mode__slide--replay"
-      role="img"
-      aria-label={label}
-    />
-  );
-};
-
-const getFullscreenElement = (): Element | null =>
-  document.fullscreenElement || (document as any).webkitFullscreenElement;
-
-/** must be called synchronously from a user gesture (click/tap/key) */
-const enterFullscreen = () => {
-  const root = document.documentElement as any;
-  const request = root.requestFullscreen || root.webkitRequestFullscreen;
-  try {
-    // returns a promise in modern browsers, undefined in older Safari
-    Promise.resolve(request?.call(root)).catch(() => {});
-  } catch {
-    // not supported/allowed (e.g. iPhone): present in the browser window
-  }
-};
-
-const exitFullscreen = () => {
-  if (!getFullscreenElement()) {
-    return;
-  }
-  const exit =
-    document.exitFullscreen || (document as any).webkitExitFullscreen;
-  try {
-    Promise.resolve(exit?.call(document)).catch(() => {});
   } catch {}
 };
 
@@ -213,7 +106,12 @@ const Presenter = ({
     [slides.length],
   );
   // `play`: replay the drawing (when going forward), `token`: restarts it
-  const [visit, setVisit] = useState(() => ({
+  const [visit, setVisit] = useState<{
+    index: number;
+    play: boolean;
+    token: number;
+    finished?: boolean;
+  }>(() => ({
     index: clampIndex(startIndex),
     play: true,
     token: 0,
@@ -240,6 +138,8 @@ const Presenter = ({
     // first press finishes the replay, like a click-through animation
     if (replayRef.current?.isPlaying()) {
       replayRef.current.finish();
+      // (for people following)
+      setVisit((prevVisit) => ({ ...prevVisit, finished: true }));
       return;
     }
     setVisit((prevVisit) =>
@@ -272,6 +172,7 @@ const Presenter = ({
         ...prevVisit,
         play: true,
         token: prevVisit.token + 1,
+        finished: false,
       })),
     [],
   );
@@ -545,6 +446,83 @@ const Presenter = ({
   // the A/✎ switch turns it off for all slides; the sidebar per slide
   const canReplay = animate && isSlideReplayEnabled(slides[index]);
 
+  // presenting to the people in the live-collaboration room (if any)
+  const sessionId = useMemo(() => randomId(), []);
+  const presentationState = useMemo<PresentationState>(
+    () => ({
+      sessionId,
+      slideId,
+      slideNumber: index + 1,
+      slideCount: slides.length,
+      play: visit.play,
+      token: visit.token,
+      finished: !!visit.finished,
+      replay: canReplay,
+      strokes: slideInk,
+    }),
+    [sessionId, slideId, index, slides.length, visit, canReplay, slideInk],
+  );
+  const presentationStateRef = useRef(presentationState);
+  presentationStateRef.current = presentationState;
+  useEffect(() => {
+    broadcastPresentation({ kind: "state", state: presentationState });
+  }, [presentationState]);
+  useEffect(() => {
+    // for people joining late, and messages that got dropped
+    const heartbeat = window.setInterval(
+      () =>
+        broadcastPresentation(
+          { kind: "state", state: presentationStateRef.current },
+          true,
+        ),
+      PRESENTATION_HEARTBEAT,
+    );
+    return () => {
+      window.clearInterval(heartbeat);
+      broadcastPresentation({ kind: "end", sessionId });
+    };
+  }, [sessionId]);
+
+  const draftTimerRef = useRef(0);
+  const draftRef = useRef<InkStroke | null>(null);
+  const onDraft = useCallback(
+    (stroke: InkStroke | null) => {
+      draftRef.current = stroke;
+      if (!stroke) {
+        // the finished stroke comes with the next state
+        window.clearTimeout(draftTimerRef.current);
+        draftTimerRef.current = 0;
+        return;
+      }
+      draftTimerRef.current ||= window.setTimeout(() => {
+        draftTimerRef.current = 0;
+        broadcastPresentation(
+          { kind: "draft", sessionId, stroke: draftRef.current },
+          true,
+        );
+      }, DRAFT_BROADCAST_INTERVAL);
+    },
+    [sessionId],
+  );
+  useEffect(() => () => window.clearTimeout(draftTimerRef.current), []);
+
+  const lastLaserBroadcastRef = useRef(0);
+  const onLaserPoint = useCallback(
+    (point: SlidePoint | null) => {
+      const now = performance.now();
+      if (
+        point &&
+        now - lastLaserBroadcastRef.current < LASER_BROADCAST_INTERVAL
+      ) {
+        return;
+      }
+      lastLaserBroadcastRef.current = now;
+      // lifting must arrive, or the trail would stay
+      broadcastPresentation({ kind: "laser", sessionId, point }, !!point);
+    },
+    [sessionId],
+  );
+
   return (
     <div
       ref={rootRef}
@@ -589,8 +567,14 @@ const Presenter = ({
         strokes={slideInk}
         active={tool === "pen"}
         onStroke={addStroke}
+        onDraft={onDraft}
       />
-      <LaserLayer active={tool === "laser"} />
+      <LaserLayer
+        key={`laser:${slideId}`}
+        slide={slides[index]}
+        active={tool === "laser"}
+        onPoint={onLaserPoint}
+      />
 
       <div
         className="presentation-mode__controls"
@@ -734,18 +718,141 @@ export const PresentationMode = () => {
     [excalidrawAPI],
   );
 
-  if (!presentation || !snapshot) {
-    return null;
+  const remote = useRemotePresentation();
+  const [leftSessionId, setLeftSessionId] = useState<string | null>(null);
+  const following =
+    !presentation &&
+    !!remote &&
+    remote.presentation.state.sessionId !== leftSessionId;
+
+  // the scene as of when following started (re-taken for slides it lacks,
+  // e.g. ones that synced later)
+  const [followSnapshot, setFollowSnapshot] = useState<{
+    slides: Slide[];
+    input: SlideRenderInput;
+  } | null>(null);
+  const followedSlideId = remote?.presentation.state.slideId;
+  useEffect(() => {
+    if (!following || !excalidrawAPI) {
+      setFollowSnapshot(null);
+      return;
+    }
+    setFollowSnapshot((prevSnapshot) => {
+      if (prevSnapshot?.slides.some((slide) => slide.id === followedSlideId)) {
+        return prevSnapshot;
+      }
+      const input = getSlideRenderInput(excalidrawAPI);
+      return { slides: getSlides(input.elements), input };
+    });
+  }, [following, excalidrawAPI, followedSlideId, remote?.receivedAt]);
+
+  const onLeave = useCallback(
+    () => setLeftSessionId(remote?.presentation.state.sessionId ?? null),
+    [remote?.presentation.state.sessionId],
+  );
+
+  if (presentation && snapshot) {
+    return createPortal(
+      <Presenter
+        slides={snapshot.slides}
+        input={snapshot.input}
+        startIndex={presentation.startIndex}
+        onExit={onExit}
+        onKeepInk={onKeepInk}
+      />,
+      document.body,
+    );
   }
 
-  return createPortal(
-    <Presenter
-      slides={snapshot.slides}
-      input={snapshot.input}
-      startIndex={presentation.startIndex}
-      onExit={onExit}
-      onKeepInk={onKeepInk}
-    />,
-    document.body,
-  );
+  if (following && followSnapshot && remote) {
+    return createPortal(
+      <PresentationFollower
+        slides={followSnapshot.slides}
+        input={followSnapshot.input}
+        remote={remote.presentation}
+        draft={remote.draft}
+        onLeave={onLeave}
+      />,
+      document.body,
+    );
+  }
+
+  if (!presentation && remote) {
+    return createPortal(
+      <button
+        type="button"
+        className="presentation-rejoin"
+        onClick={() => setLeftSessionId(null)}
+      >
+        ▶ Watch {getPresenterName(remote.presentation)}'s presentation
+      </button>,
+      document.body,
+    );
+  }
+
+  return null;
+};
+
+/** The presentation someone in the collaboration room is giving, if any. */
+const useRemotePresentation = () => {
+  const [remote, setRemote] = useState<{
+    presentation: RemotePresentation;
+    draft: InkStroke | null;
+    receivedAt: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = onPresentationMessage((message) => {
+      setRemote((prev) => {
+        const sessionId = prev?.presentation.state.sessionId;
+        switch (message.kind) {
+          case "state": {
+            const { state } = message;
+            // a stroke being drawn ends up in the state when finished
+            const draft =
+              prev?.draft &&
+              sessionId === state.sessionId &&
+              prev.presentation.state.slideId === state.slideId
+                ? prev.draft
+                : null;
+            return {
+              presentation: {
+                socketId: message.socketId,
+                username: message.username,
+                state,
+              },
+              draft,
+              receivedAt: Date.now(),
+            };
+          }
+          case "draft":
+            return prev && message.sessionId === sessionId
+              ? { ...prev, draft: message.stroke, receivedAt: Date.now() }
+              : prev;
+          case "end":
+            return message.sessionId === sessionId ? null : prev;
+          default:
+            return prev;
+        }
+      });
+    });
+
+    // the presenter left (or lost connection) without saying so
+    const timeout = window.setInterval(
+      () =>
+        setRemote((prev) =>
+          prev && Date.now() - prev.receivedAt > PRESENTATION_TIMEOUT
+            ? null
+            : prev,
+        ),
+      1000,
+    );
+
+    return () => {
+      unsubscribe();
+      window.clearInterval(timeout);
+    };
+  }, []);
+
+  return remote;
 };

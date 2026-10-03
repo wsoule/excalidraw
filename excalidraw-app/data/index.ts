@@ -39,6 +39,7 @@ import { encodeFilesForUpload } from "./FileManager";
 import { saveFilesToFirebase } from "./firebase";
 
 import type { WS_SUBTYPES } from "../app_constants";
+import type { PresentationMessage } from "../presentation/presentationSync";
 
 export type SyncableExcalidrawElement = OrderedExcalidrawElement &
   MakeBrand<"SyncableExcalidrawElement">;
@@ -116,6 +117,14 @@ export type SocketUpdateDataSource = {
       socketId: SocketId;
       userState: UserIdleState;
       username: string;
+    };
+  };
+  PRESENTATION: {
+    type: WS_SUBTYPES.PRESENTATION;
+    payload: {
+      socketId: SocketId;
+      username: string;
+      message: PresentationMessage;
     };
   };
 };
