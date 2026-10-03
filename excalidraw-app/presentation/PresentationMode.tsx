@@ -16,8 +16,12 @@ import {
   renderSlideToSvgUrl,
 } from "./slides";
 import { useDrawingRecorder } from "./useDrawingRecorder";
+import { InkLayer, LaserLayer } from "./InkLayers";
+import { keepInk } from "./inkStrokes";
 
 import "./Presentation.scss";
+
+import type { InkStroke } from "./inkStrokes";
 
 import type { Slide, SlideRenderInput } from "./slides";
 
@@ -27,6 +31,8 @@ export const presentationAtom = atom<{ startIndex: number } | null>(null);
 const CONTROLS_HIDE_DELAY = 2500;
 const SWIPE_THRESHOLD = 50;
 const ANIMATE_STORAGE_KEY = "excalidraw-presentation-animate";
+
+const EMPTY_INK: readonly InkStroke[] = [];
 
 const loadAnimatePreference = () => {
   try {
@@ -192,11 +198,14 @@ const Presenter = ({
   input,
   startIndex,
   onExit,
+  onKeepInk,
 }: {
   slides: readonly Slide[];
   input: SlideRenderInput;
   startIndex: number;
   onExit: () => void;
+  /** saves ink into the drawing */
+  onKeepInk: (slide: Slide, strokes: readonly InkStroke[]) => void;
 }) => {
   const rootRef = useRef<HTMLDivElement>(null);
   const clampIndex = useCallback(
@@ -271,6 +280,60 @@ const Presenter = ({
     () => setVisit((prevVisit) => ({ ...prevVisit, play: false })),
     [],
   );
+  // pen/laser; ink is per slide, for this presentation only unless kept
+  const [tool, setTool] = useState<"pen" | "laser" | null>(null);
+  const [ink, setInk] = useState<ReadonlyMap<string, readonly InkStroke[]>>(
+    () => new Map(),
+  );
+  const slideId = slides[index].id;
+  const slideInk = ink.get(slideId) ?? EMPTY_INK;
+  const hasUnkeptInk = slideInk.some((stroke) => !stroke.kept);
+
+  const updateSlideInk = useCallback(
+    (update: (strokes: readonly InkStroke[]) => readonly InkStroke[]) =>
+      setInk((prevInk) => {
+        const nextInk = new Map(prevInk);
+        nextInk.set(slideId, update(prevInk.get(slideId) ?? EMPTY_INK));
+        return nextInk;
+      }),
+    [slideId],
+  );
+  const toggleTool = useCallback(
+    (nextTool: "pen" | "laser") =>
+      setTool((prevTool) => (prevTool === nextTool ? null : nextTool)),
+    [],
+  );
+  const addStroke = useCallback(
+    (stroke: InkStroke) => updateSlideInk((strokes) => [...strokes, stroke]),
+    [updateSlideInk],
+  );
+  // kept ink is in the drawing; only clear/undo the rest
+  const clearInk = useCallback(
+    () => updateSlideInk((strokes) => strokes.filter((stroke) => stroke.kept)),
+    [updateSlideInk],
+  );
+  const undoInk = useCallback(
+    () =>
+      updateSlideInk((strokes) => {
+        const lastIndex = strokes.findLastIndex((stroke) => !stroke.kept);
+        return lastIndex === -1
+          ? strokes
+          : strokes.filter((_, strokeIndex) => strokeIndex !== lastIndex);
+      }),
+    [updateSlideInk],
+  );
+  const keepSlideInk = useCallback(() => {
+    if (!hasUnkeptInk) {
+      return;
+    }
+    onKeepInk(slides[index], slideInk);
+    updateSlideInk((strokes) =>
+      strokes.map((stroke) =>
+        stroke.kept ? stroke : { ...stroke, kept: true },
+      ),
+    );
+  }, [hasUnkeptInk, onKeepInk, slides, index, slideInk, updateSlideInk]);
+
   const toggleAnimate = useCallback(() => {
     setAnimate((prevAnimate) => {
       saveAnimatePreference(!prevAnimate);
@@ -380,6 +443,12 @@ const Presenter = ({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       let handled = true;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        undoInk();
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       switch (event.key) {
         case "ArrowRight":
         case "ArrowDown":
@@ -408,6 +477,18 @@ const Presenter = ({
         case "a":
           toggleAnimate();
           break;
+        case "d":
+          toggleTool("pen");
+          break;
+        case "l":
+          toggleTool("laser");
+          break;
+        case "e":
+          clearInk();
+          break;
+        case "k":
+          keepSlideInk();
+          break;
         case "Escape":
           onExit();
           break;
@@ -421,7 +502,19 @@ const Presenter = ({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [next, prev, goTo, replay, toggleAnimate, onExit, slides.length]);
+  }, [
+    next,
+    prev,
+    goTo,
+    replay,
+    toggleAnimate,
+    toggleTool,
+    clearInk,
+    undoInk,
+    keepSlideInk,
+    onExit,
+    slides.length,
+  ]);
 
   // tap/click right side → next, left side → previous; swipe on touch
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -456,7 +549,8 @@ const Presenter = ({
     <div
       ref={rootRef}
       className={`presentation-mode${
-        controlsVisible ? "" : " presentation-mode--idle"
+        // keep the cursor while drawing/pointing
+        controlsVisible || tool ? "" : " presentation-mode--idle"
       }`}
       tabIndex={-1}
       role="dialog"
@@ -488,6 +582,15 @@ const Presenter = ({
       ) : (
         <div className="presentation-mode__loading">Loading slide…</div>
       )}
+
+      <InkLayer
+        key={slideId}
+        slide={slides[index]}
+        strokes={slideInk}
+        active={tool === "pen"}
+        onStroke={addStroke}
+      />
+      <LaserLayer active={tool === "laser"} />
 
       <div
         className="presentation-mode__controls"
@@ -538,6 +641,45 @@ const Presenter = ({
         >
           ✎
         </button>
+        <span className="presentation-mode__divider" />
+        <button
+          type="button"
+          className="presentation-mode__pill"
+          onClick={() => toggleTool("pen")}
+          aria-pressed={tool === "pen"}
+          title="Pen: draw on the slide (D)"
+        >
+          Pen
+        </button>
+        <button
+          type="button"
+          className="presentation-mode__pill"
+          onClick={() => toggleTool("laser")}
+          aria-pressed={tool === "laser"}
+          title="Laser pointer (L)"
+        >
+          Laser
+        </button>
+        {hasUnkeptInk && (
+          <>
+            <button
+              type="button"
+              className="presentation-mode__pill"
+              onClick={clearInk}
+              title="Clear this slide's ink (E; Ctrl+Z undoes a stroke)"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="presentation-mode__pill"
+              onClick={keepSlideInk}
+              title="Save this slide's ink into the drawing (K)"
+            >
+              Keep
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="presentation-mode__exit"
@@ -582,6 +724,16 @@ export const PresentationMode = () => {
     setPresentation(null);
   }, [setPresentation]);
 
+  const onKeepInk = useCallback(
+    (slide: Slide, strokes: readonly InkStroke[]) => {
+      if (excalidrawAPI) {
+        keepInk(excalidrawAPI, slide, strokes);
+        excalidrawAPI.setToast({ message: "Ink saved to the slide" });
+      }
+    },
+    [excalidrawAPI],
+  );
+
   if (!presentation || !snapshot) {
     return null;
   }
@@ -592,6 +744,7 @@ export const PresentationMode = () => {
       input={snapshot.input}
       startIndex={presentation.startIndex}
       onExit={onExit}
+      onKeepInk={onKeepInk}
     />,
     document.body,
   );
