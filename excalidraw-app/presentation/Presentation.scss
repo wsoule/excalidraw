@@ -199,6 +199,17 @@
   cursor: pointer;
 }
 
+// the sidebar's tab containers grow to fit their content by default (flex
+// items don't shrink below it), so the panel would be clipped instead of
+// scrolling
+.excalidraw .sidebar-tabs-root:has(> .presentation-tab[data-state="active"]) {
+  min-height: 0;
+
+  > .presentation-tab {
+    min-height: 0;
+  }
+}
+
 .excalidraw .presentation-panel {
   display: flex;
   flex-direction: column;

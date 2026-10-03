@@ -109,7 +109,7 @@ export const AppSidebar = () => {
           </LinkButton>
         </div>
       </Sidebar.Tab>
-      <Sidebar.Tab tab="presentation" className="px-3">
+      <Sidebar.Tab tab="presentation" className="px-3 presentation-tab">
         <PresentationPanel />
       </Sidebar.Tab>
     </DefaultSidebar>
