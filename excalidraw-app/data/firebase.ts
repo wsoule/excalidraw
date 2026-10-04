@@ -32,6 +32,8 @@ import type {
 
 import { FILE_CACHE_MAX_AGE_SEC } from "../app_constants";
 
+import { ROOM_STORAGE_URL, loadRoomScene, saveRoomScene } from "./roomStorage";
+
 import { getSyncableElements } from ".";
 
 import type { SyncableExcalidrawElement } from ".";
@@ -200,6 +202,19 @@ export const saveToFirebase = async (
     return null;
   }
 
+  // our own server: no size limit like a Firestore document's (~1 MB)
+  if (ROOM_STORAGE_URL) {
+    const storedElements = await saveRoomScene(
+      roomId,
+      roomKey,
+      elements,
+      appState,
+      () => loadFromFirestore(roomId, roomKey),
+    );
+    FirebaseSceneVersionCache.set(socket, storedElements);
+    return toBrandedType<RemoteExcalidrawElement[]>([...storedElements]);
+  }
+
   const firestore = _getFirestore();
   const docRef = doc(firestore, "scenes", roomId);
 
@@ -246,10 +261,9 @@ export const saveToFirebase = async (
   return toBrandedType<RemoteExcalidrawElement[]>(storedElements);
 };
 
-export const loadFromFirebase = async (
+const loadFromFirestore = async (
   roomId: string,
   roomKey: string,
-  socket: Socket | null,
 ): Promise<readonly SyncableExcalidrawElement[] | null> => {
   const firestore = _getFirestore();
   const docRef = doc(firestore, "scenes", roomId);
@@ -258,11 +272,26 @@ export const loadFromFirebase = async (
     return null;
   }
   const storedScene = docSnap.data() as FirebaseStoredScene;
-  const elements = getSyncableElements(
+  return getSyncableElements(
     restoreElements(await decryptElements(storedScene, roomKey), null, {
       deleteInvisibleElements: true,
     }),
   );
+};
+
+export const loadFromFirebase = async (
+  roomId: string,
+  roomKey: string,
+  socket: Socket | null,
+): Promise<readonly SyncableExcalidrawElement[] | null> => {
+  const elements = ROOM_STORAGE_URL
+    ? // rooms from before our own server are still in Firebase
+      (await loadRoomScene(roomId, roomKey)) ??
+      (await loadFromFirestore(roomId, roomKey).catch(() => null))
+    : await loadFromFirestore(roomId, roomKey);
+  if (!elements) {
+    return null;
+  }
 
   if (socket) {
     FirebaseSceneVersionCache.set(socket, elements);

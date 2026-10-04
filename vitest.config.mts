@@ -1,6 +1,6 @@
 import path from "path";
 
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
@@ -80,6 +80,8 @@ export default defineConfig({
       hooks: "parallel",
     },
     setupFiles: ["./setupTests.ts"],
+    // the collaboration server has its own tests (node --test)
+    exclude: [...configDefaults.exclude, "room-server/**"],
     globals: true,
     environment: "jsdom",
     // don't list skipped tests in the failure tree — keeps output readable

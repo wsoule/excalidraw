@@ -1,0 +1,19 @@
+{
+  "name": "excalidraw-room-server",
+  "private": true,
+  "description": "Excalidraw collaboration server with encrypted scene storage (port of excalidraw/excalidraw-room, MIT)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "socket.io": "4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "4.8.1"
+  }
+}
