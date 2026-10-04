@@ -76,11 +76,12 @@ const PALM_GUARD_TIME = 1000;
 const LASER_BROADCAST_INTERVAL = 25;
 const FULLSCREEN_HINT_DURATION = 4000;
 
+/** replaying how slides were drawn is opt-in (✎ / A) */
 const loadAnimatePreference = () => {
   try {
-    return localStorage.getItem(ANIMATE_STORAGE_KEY) !== "false";
+    return localStorage.getItem(ANIMATE_STORAGE_KEY) === "true";
   } catch {
-    return true;
+    return false;
   }
 };
 
