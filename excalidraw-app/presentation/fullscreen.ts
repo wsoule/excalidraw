@@ -23,3 +23,7 @@ export const exitFullscreen = () => {
     Promise.resolve(exit?.call(document)).catch(() => {});
   } catch {}
 };
+
+/** false where pages can't go fullscreen (e.g. iPhone) */
+export const isFullscreenSupported = () =>
+  !!(document.fullscreenEnabled || (document as any).webkitFullscreenEnabled);
