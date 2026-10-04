@@ -30,6 +30,9 @@ jobs:
           if [ -n "$COLLAB_SERVER_URL" ]; then
             export VITE_APP_WS_SERVER_URL="$COLLAB_SERVER_URL"
           fi
+          if [ -n "$ROOM_STORAGE_URL" ]; then
+            export VITE_APP_ROOM_STORAGE_URL="$ROOM_STORAGE_URL"
+          fi
           if [ -n "$FIREBASE_CONFIG" ]; then
             export VITE_APP_FIREBASE_CONFIG="$FIREBASE_CONFIG"
           fi
@@ -40,6 +43,8 @@ jobs:
           VITE_APP_GIT_SHA: ${{ github.sha }}
           # self-hosted excalidraw-room on Railway (CORS_ORIGIN=https://wsoule.github.io)
           COLLAB_SERVER_URL: ${{ vars.COLLAB_SERVER_URL || 'https://excalidraw-room-production-f4cb.up.railway.app' }}
+          # rooms saved on the collab server (room-server/), not Firestore
+          ROOM_STORAGE_URL: ${{ vars.ROOM_STORAGE_URL || 'https://excalidraw-room-production-f4cb.up.railway.app/api' }}
           FIREBASE_CONFIG: ${{ vars.FIREBASE_CONFIG }}
       - name: Publish to gh-pages branch
         run: |
