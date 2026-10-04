@@ -1,7 +1,7 @@
 import { easeOut, getSvgPathFromStroke } from "@excalidraw/common";
 import { getFreeDrawSvgPath } from "@excalidraw/element";
 import { LaserPointer } from "@excalidraw/laser-pointer";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import type { LaserPointerOptions } from "@excalidraw/laser-pointer";
 
@@ -58,14 +58,18 @@ const toSlidePoint = (
   };
 };
 
-const InkPath = ({ stroke, slide }: { stroke: InkStroke; slide: Slide }) => (
-  <path
-    d={getFreeDrawSvgPath(stroke.element)}
-    fill={stroke.element.strokeColor}
-    transform={`translate(${stroke.element.x - slide.x} ${
-      stroke.element.y - slide.y
-    })`}
-  />
+// memoized: computing a stroke's outline is expensive, and a slide's
+// finished strokes would otherwise all be recomputed on every pointer move
+const InkPath = memo(
+  ({ stroke, slide }: { stroke: InkStroke; slide: Slide }) => (
+    <path
+      d={getFreeDrawSvgPath(stroke.element)}
+      fill={stroke.element.strokeColor}
+      transform={`translate(${stroke.element.x - slide.x} ${
+        stroke.element.y - slide.y
+      })`}
+    />
+  ),
 );
 
 /**
@@ -101,11 +105,23 @@ export const InkLayer = ({
   const svgRef = useRef<SVGSVGElement>(null);
   const [draft, setDraft] = useState<InkStroke | null>(null);
   const draftRef = useRef<InkStroke | null>(null);
+  const draftFrameRef = useRef(0);
 
+  // rendered at most once per frame (the Pencil sends more pointer events
+  // than that, and falling behind makes the ink lag behind the pen)
   const setDraftStroke = (stroke: InkStroke | null) => {
     draftRef.current = stroke;
-    setDraft(stroke);
     onDraft?.(stroke);
+    if (!stroke) {
+      cancelAnimationFrame(draftFrameRef.current);
+      draftFrameRef.current = 0;
+      setDraft(null);
+      return;
+    }
+    draftFrameRef.current ||= requestAnimationFrame(() => {
+      draftFrameRef.current = 0;
+      setDraft(draftRef.current);
+    });
   };
 
   const toScene = (event: { clientX: number; clientY: number }) => {
@@ -165,6 +181,7 @@ export const InkLayer = ({
       if (draftRef.current) {
         inputRefRef.current?.current?.up();
       }
+      cancelAnimationFrame(draftFrameRef.current);
     },
     [],
   );

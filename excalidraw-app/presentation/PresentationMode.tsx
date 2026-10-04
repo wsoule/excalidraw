@@ -1,4 +1,4 @@
-import { randomId } from "@excalidraw/common";
+import { isIOS, randomId } from "@excalidraw/common";
 import { useExcalidrawAPI } from "@excalidraw/excalidraw";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -18,6 +18,7 @@ import {
   enterFullscreen,
   exitFullscreen,
   getFullscreenElement,
+  isFullscreenSupported,
 } from "./fullscreen";
 
 import { InkLayer, LaserLayer } from "./InkLayers";
@@ -64,12 +65,16 @@ const PENCIL_HINT_DURATION = 1200;
 /** a Pencil touch this short and still is a tap */
 const PENCIL_TAP_TIME = 250;
 const PENCIL_TAP_DISTANCE = 10;
-/** how close the second tap of a double-tap must be (px) */
-const PENCIL_DOUBLE_TAP_DISTANCE = 40;
+/**
+ * how close the second tap of a double-tap must be (px); small, so dots
+ * written close together (a colon, "ü", ...) aren't one
+ */
+const PENCIL_DOUBLE_TAP_DISTANCE = 15;
 /** ignore finger taps this soon after using the Pencil (resting palm) */
 const PALM_GUARD_TIME = 1000;
 
 const LASER_BROADCAST_INTERVAL = 25;
+const FULLSCREEN_HINT_DURATION = 4000;
 
 const loadAnimatePreference = () => {
   try {
@@ -296,6 +301,7 @@ const Presenter = ({
   // double-tap the top-right corner to get the controls back (no Esc on iPad)
   const cornerTapRef = useRef(0);
   const onPointerDownCapture = (event: React.PointerEvent) => {
+    lastPointerTypeRef.current = event.pointerType;
     if (
       !clean ||
       event.clientX < window.innerWidth - CLEAN_EXIT_CORNER ||
@@ -445,13 +451,40 @@ const Presenter = ({
     };
   }, [slides, input, startIndex]);
 
-  // leaving fullscreen (e.g. Esc) ends the presentation
+  // leaving fullscreen with Esc ends the presentation, but on a touchscreen
+  // it keeps going in the window: iPadOS leaves fullscreen on any quick
+  // downward swipe (a native gesture pages can't prevent), which is easy to
+  // do while writing with the Pencil
+  const lastPointerTypeRef = useRef(
+    navigator.maxTouchPoints > 0 ? "touch" : "mouse",
+  );
+  const [isFullscreen, setIsFullscreen] = useState(
+    () => !!getFullscreenElement(),
+  );
+  const [fullscreenHint, setFullscreenHint] = useState(false);
+  useEffect(() => {
+    if (fullscreenHint) {
+      const timer = window.setTimeout(
+        () => setFullscreenHint(false),
+        FULLSCREEN_HINT_DURATION,
+      );
+      return () => window.clearTimeout(timer);
+    }
+  }, [fullscreenHint]);
   useEffect(() => {
     let wasFullscreen = !!getFullscreenElement();
     const onFullscreenChange = () => {
       const isFullscreen = !!getFullscreenElement();
+      setIsFullscreen(isFullscreen);
       if (wasFullscreen && !isFullscreen) {
-        onExit();
+        if (lastPointerTypeRef.current === "mouse") {
+          onExit();
+        } else {
+          setFullscreenHint(true);
+        }
+      }
+      if (isFullscreen) {
+        setFullscreenHint(false);
       }
       wasFullscreen = isFullscreen;
     };
@@ -467,6 +500,28 @@ const Presenter = ({
       );
     };
   }, [onExit]);
+
+  // Apple Pencil Scribble turns handwriting into text for the nearest text
+  // field (even Safari's address bar), swallowing the strokes; like the
+  // editor, prevent it on iOS. Not on the controls, where it would stop the
+  // taps from becoming clicks (pointer events still fire either way).
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!isIOS || !root) {
+      return;
+    }
+    const onTouchStart = (event: TouchEvent) => {
+      if (
+        !(event.target as Element | null)?.closest?.(
+          ".presentation-mode__controls",
+        )
+      ) {
+        event.preventDefault();
+      }
+    };
+    root.addEventListener("touchstart", onTouchStart, { passive: false });
+    return () => root.removeEventListener("touchstart", onTouchStart);
+  }, []);
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
@@ -868,6 +923,14 @@ const Presenter = ({
           Pencil: {pencilHint === "pen" ? "Pen" : "Laser"}
         </div>
       )}
+      {fullscreenHint && (
+        <div className="presentation-mode__hint">
+          Left fullscreen (swiping down does that on iPad).{" "}
+          {clean
+            ? "Double-tap the top-right corner, then ⛶ to go back."
+            : "Tap ⛶ to go back."}
+        </div>
+      )}
       {cleanHint && (
         <div className="presentation-mode__hint">
           Double-tap the top-right corner to show the controls
@@ -1000,6 +1063,17 @@ const Presenter = ({
             ? "● Rec"
             : `■ ${formatDuration(performance.now() - recordingStart)}`}
         </button>
+        {!isFullscreen && isFullscreenSupported() && (
+          <button
+            type="button"
+            className="presentation-mode__text-button"
+            onClick={enterFullscreen}
+            aria-label="Fullscreen"
+            title="Fullscreen"
+          >
+            ⛶
+          </button>
+        )}
         <button
           type="button"
           className="presentation-mode__exit"
