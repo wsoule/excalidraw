@@ -140,8 +140,8 @@ final class DeckStore: ObservableObject {
         // Slides are always light (white paper), whatever the system
         // appearance, so render the ink's dynamic colors in light mode.
         UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
-            for slide in slides where ids?.contains(slide.id) ?? true {
-                updated[slide.id] = drawing.image(from: slide.rect, scale: thumbnailScale)
+            for slide in self.slides where ids?.contains(slide.id) ?? true {
+                updated[slide.id] = self.drawing.image(from: slide.rect, scale: self.thumbnailScale)
             }
         }
         let liveIDs = Set(slides.map(\.id))

@@ -77,9 +77,13 @@ final class CanvasContainerView: UIView, PKCanvasViewDelegate {
         }
         updateDecorations()
 
-        // The tool picker only shows while the canvas is first responder;
-        // get it back if something else (e.g. a menu) took it.
-        if window != nil, isToolPickerSetUp, !canvasView.isFirstResponder {
+        // The tool picker only shows while the canvas is first responder.
+        // Take it back when the user moves to another slide or view, but not
+        // on every SwiftUI update (thumbnails refresh after each stroke), and
+        // never while a menu, popover or dialog is up.
+        if viewportChanged, window != nil, isToolPickerSetUp,
+           !canvasView.isFirstResponder,
+           window?.rootViewController?.presentedViewController == nil {
             canvasView.becomeFirstResponder()
         }
     }
@@ -112,7 +116,11 @@ final class CanvasContainerView: UIView, PKCanvasViewDelegate {
         // Rotation, Split View, showing/hiding the slide list: re-fit.
         if bounds.size != lastLayoutSize {
             lastLayoutSize = bounds.size
-            applyViewport(animated: false)
+            // Inside a rotation animation the ink would animate while the
+            // paper redraws instantly; keep them together.
+            UIView.performWithoutAnimation {
+                applyViewport(animated: false)
+            }
         }
         updateDecorations()
     }
@@ -260,13 +268,20 @@ final class CanvasContainerView: UIView, PKCanvasViewDelegate {
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        clampToCurrentSlide()
+        // Clamping mid-pinch would fight UIKit's zoom anchor and make the
+        // slide jump; settle it once the pinch ends instead.
+        if !scrollView.isZooming, !scrollView.isZoomBouncing {
+            clampToCurrentSlide()
+        }
         updateDecorations()
     }
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         updateContentSize()
-        clampToCurrentSlide()
         updateDecorations()
+    }
+
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        clampToCurrentSlide()
     }
 }
